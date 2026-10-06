@@ -44,6 +44,37 @@ class TGS_HTsoft_Api_Catalog
                 'label' => 'Nhóm hàng',
                 'note'  => '',
             ],
+            // ── Bổ sung 06/10: hàm có trên máy chủ thật (trang /help) nhưng không có trong tài liệu ──
+            'GetListEmployee' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Nhân viên',
+                'note'  => 'AddListOrder cần MÃ nhân viên (saleCode); mình đang giữ ID.',
+            ],
+            'GetListBranch' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Chi nhánh',
+                'note'  => 'ID chi nhánh cho các hàm lọc theo branchIDList.',
+            ],
+            'GetListPaymentType' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Hình thức thanh toán (có mã)',
+                'note'  => 'Xem có trả MÃ hình thức để gửi paymentTypeCode ở AddListOrder không.',
+            ],
+            'GetListBank' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Ngân hàng (có mã)',
+                'note'  => 'Mã ngân hàng cho paymentBankCode.',
+            ],
+            'GetListUnit' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Đơn vị tính',
+                'note'  => 'UnitID / tên đơn vị cho dòng hàng của đơn.',
+            ],
+            'GetListErrorCode' => [
+                'group' => 'Danh mục', 'method' => 'GET', 'body' => null,
+                'label' => 'Bảng mã lỗi',
+                'note'  => 'Ý nghĩa các responseCode HTsoft trả về.',
+            ],
             'GetPriceAndQuantityByInventoryCode' => [
                 'group' => 'Giá và tồn', 'method' => 'POST',
                 'body'  => ['MerchantSKU' => '{{SKU}}', 'WarehouseCode' => '{{WAREHOUSE}}'],
@@ -74,6 +105,12 @@ class TGS_HTsoft_Api_Catalog
                 'label' => 'Khách hàng theo số điện thoại',
                 'note'  => 'Cho Mã KH + ID khách. Thay được bước "tra khách theo SĐT" đang làm qua SQL.',
             ],
+            'GetCustomerByMobile' => [
+                'group' => 'Khách hàng', 'method' => 'GET', 'body' => null,
+                'query' => ['mobile' => '{{PHONE}}'],
+                'label' => 'Khách hàng theo số di động (hàm mới, gọn)',
+                'note'  => 'Trả mã khách (code) — dùng làm CusCode khi gửi đơn.',
+            ],
             'GetCountAllCustomer' => [
                 'group' => 'Khách hàng', 'method' => 'GET', 'body' => null,
                 'label' => 'Đếm số khách hàng',
@@ -84,6 +121,18 @@ class TGS_HTsoft_Api_Catalog
                 'body'  => ['invoiceCode' => '{{INVOICE}}'],
                 'label' => 'Một hoá đơn bán theo số phiếu',
                 'note'  => 'Dùng để ĐỐI CHIẾU: phiếu mình nghĩ đã lên HTsoft có thật sự ở đó, đúng tiền, đúng dòng hàng không.',
+            ],
+            'GetInvoicebyCode' => [
+                'group' => 'Hoá đơn', 'method' => 'POST',
+                'body'  => ['invoiceCode' => '{{INVOICE}}'],
+                'label' => 'Một hoá đơn theo số phiếu (hàm mới, đủ trường hơn)',
+                'note'  => 'Có RefCode / RefID (chứng từ gốc), nhân viên, ca, hình thức thanh toán. Xem RefCode có phải mã đơn (SO) mình gửi không.',
+            ],
+            'LoadListOrderPOSObyDate' => [
+                'group' => 'Hoá đơn', 'method' => 'POST',
+                'body'  => ['IsPo' => false, 'fromdate' => '{{TODAY_START}}', 'todate' => '{{TODAY_END}}'],
+                'label' => 'Đơn đặt hàng (SO) theo ngày',
+                'note'  => 'Dùng để kiểm đơn mình đẩy bằng AddListOrder đã nằm bên HTsoft chưa.',
             ],
             'GetRevenueInvoiceByDate' => [
                 'group' => 'Hoá đơn', 'method' => 'POST',

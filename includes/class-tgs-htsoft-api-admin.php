@@ -132,8 +132,13 @@ class TGS_HTsoft_Api_Admin
             }
         }
 
+        $query = self::fill((array) ($def['query'] ?? []), $vars);
+        if (array_key_exists('mobile', $query) && $query['mobile'] === '') {
+            wp_send_json_error(['message' => 'Hàm này cần số điện thoại — điền ở ô phía trên rồi bấm lại.']);
+        }
+
         @set_time_limit(0);
-        $r = TGS_HTsoft_Api_Client::call($fn, $def['method'] === 'GET' ? null : (array) $body);
+        $r = TGS_HTsoft_Api_Client::call($fn, $def['method'] === 'GET' ? null : (array) $body, ['query' => $query]);
 
         // Tóm tắt hình dạng dữ liệu để đọc nhanh: bao nhiêu dòng, mỗi dòng có trường gì.
         $shape = '';

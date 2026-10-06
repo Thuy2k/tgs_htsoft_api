@@ -171,6 +171,7 @@ $hta_today = current_time('Y-m-d');
         lastFn = fn;
         $('htaResHead').textContent = '— đang gọi ' + fn + '…';
         $('htaOut').textContent = 'Đang gọi…';
+        $('htaResHead').scrollIntoView({ behavior: 'smooth', block: 'start' });
         post('tgs_htsoft_api_call', {
             fn: fn, body: body || '',
             date: $('htaDate').value, warehouse: $('htaWh').value, branch_id: $('htaBr').value,
@@ -200,8 +201,7 @@ $hta_today = current_time('Y-m-d');
 
     $('htaWmSave').addEventListener('click', function () {
         var v = $('htaWm').value;
-        if (v === 'api' && !window.confirm('Chuyển đường ghi phiếu sang API cho TOÀN HỆ THỐNG?
-Nếu lời gọi API chưa khai báo, mọi lượt đẩy phiếu sẽ dừng (phiếu giữ mã BT).')) { return; }
+        if (v === 'api' && !window.confirm('Chuyển đường ghi phiếu sang API cho TOÀN HỆ THỐNG?\nNếu lời gọi API chưa khai báo, mọi lượt đẩy phiếu sẽ dừng (phiếu giữ mã BT).')) { return; }
         post('tgs_htsoft_api_save', { write_mode: v }).then(function (out) {
             $('htaWmMsg').textContent = (out && out.success) ? 'Đã lưu: ' + (v === 'api' ? 'API' : 'SQL') + '.' : 'Không lưu được.';
         });
