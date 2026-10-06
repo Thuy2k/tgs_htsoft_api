@@ -71,7 +71,7 @@
                 + '<strong style="font-size:15px;">Đẩy phiếu bán còn mã BT lên HTsoft thành đơn đặt hàng (SO) — qua API</strong>'
                 + '<span id="htaSoSum" style="color:#64748b;font-size:12.5px;"></span>'
                 + '<button type="button" id="htaSoX" style="margin-left:auto;border:0;background:none;font-size:20px;cursor:pointer;">×</button></div>'
-                + '<div id="htaSoShops" style="padding:10px 18px;border-bottom:1px solid #e2e8f0;font-size:12.5px;color:#334155;max-height:16vh;overflow:auto;"></div>'
+                + '<div id="htaSoShops" style="flex-shrink:0;padding:10px 18px;border-bottom:1px solid #e2e8f0;font-size:12.5px;color:#334155;max-height:16vh;overflow:auto;"></div>'
                 + '<div style="padding:8px 18px;"><div style="height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;"><div id="htaSoBar" style="height:100%;width:0;background:#7c3aed;"></div></div></div>'
                 + '<div id="htaSoMain" style="flex:1;min-height:0;overflow:auto;padding:0 18px;"><table><thead><tr>'
                 + '<th><input type="checkbox" id="htaSoAll" title="Tích / bỏ tích tất cả phiếu chưa lên SO"></th>'
@@ -122,6 +122,19 @@
                     .then(load)
                     .catch(function (err) { window.alert(err.message || 'Không lưu được.'); $b.prop('disabled', false); });
             });
+            $ov.on('click', '#htaSoOnAll', function () {
+                var list = (st.off || []).slice();
+                if (st.running || !list.length) { return; }
+                if (!window.confirm('Bật ĐẨY SO cho ' + list.length + ' shop: ' + list.map(function (s) { return s.shop; }).join(', ')
+                    + '?\n\nChỉ cho phép đẩy phiếu BT của các shop này lên SO bằng nút này. Không thay đổi gì ở luồng bán hàng tại quầy.')) { return; }
+                var $b = $(this).prop('disabled', true).text('Đang bật…');
+                list.reduce(function (p, sh) {
+                    return p.then(function () { return post('tgs_htsoft_api_so_toggle', { blog: sh.blog, on: 1 }); });
+                }, Promise.resolve())
+                    .catch(function (err) { window.alert(err.message || 'Không bật được.'); })
+                    .then(load)
+                    .catch(function (err) { window.alert(err.message || 'Không quét lại được.'); $b.prop('disabled', false); });
+            });
             $ov.on('click', '.c-view', function () {
                 var it = st.items[$(this).closest('tr').data('i')];
                 if (it) { view(it); }
@@ -164,8 +177,17 @@
             });
             var nDone = st.items.filter(function (x) { return x.done; }).length;
             $('#htaSoSum').text(st.items.length + ' phiếu còn mã BT · ' + nDone + ' đã lên SO · quét ' + data.days + ' ngày gần nhất, sau mốc khoá sổ');
+            // Shop đang chọn nhưng chưa bật đẩy SO thì KHÔNG được liệt kê phiếu — báo rõ, kèm nút bật một lượt.
+            st.off = (data.shops || []).filter(function (sh) { return !sh.so_on; });
             $('#htaSoShops').html(
                 '<div style="margin-bottom:4px;color:#64748b;">API: <b>' + esc(data.api || '(chưa cấu hình)') + '</b></div>'
+                + (st.off.length
+                    ? '<div style="margin:4px 0 6px;padding:7px 10px;border:1px solid #fecaca;border-radius:8px;background:#fef2f2;color:#991b1b;">'
+                        + '<b>' + st.off.length + ' shop đang chọn chưa bật đẩy SO nên chưa liệt kê phiếu:</b> '
+                        + esc(st.off.map(function (sh) { return sh.shop; }).join(', '))
+                        + ' <button type="button" id="htaSoOnAll" style="margin-left:8px;padding:3px 10px;border:1px solid #b91c1c;border-radius:6px;background:#fff;color:#b91c1c;font-weight:700;cursor:pointer;">'
+                        + 'Bật đẩy SO cho cả ' + st.off.length + ' shop</button></div>'
+                    : '')
                 + ((data.shops || []).map(function (sh) {
                     return '<span style="display:inline-block;margin:2px 14px 2px 0;"><b>' + esc(sh.shop) + '</b>: '
                         + (sh.skip ? '<span style="color:#b91c1c">' + esc(sh.skip) + '</span>'
@@ -272,6 +294,15 @@
                 return;
             }
             var blogs = $('.bctk-site:checked').map(function () { return parseInt(this.value, 10); }).get();
+            // Khớp đúng bộ lọc đang nhìn: ô MÃ KHO (giá trị "blogId::mã") đang tích kho nào thì chỉ quét shop đó.
+            if ($('.bctk-zone').length) {
+                var zoneBlogs = {};
+                $('.bctk-zone:checked').each(function () { zoneBlogs[parseInt(String(this.value).split('::')[0], 10)] = 1; });
+                if (Object.keys(zoneBlogs).length) {
+                    var both = blogs.filter(function (b) { return zoneBlogs[b]; });
+                    blogs = both.length ? both : Object.keys(zoneBlogs).map(Number);
+                }
+            }
             var pass = window.prompt(
                 'ĐẨY PHIẾU BÁN CÒN MÃ BT LÊN HTSOFT THÀNH ĐƠN ĐẶT HÀNG (SO) — QUA API\n\n'
                 + 'Quét ' + (blogs.length ? blogs.length + ' chi nhánh đang tích' : 'TẤT CẢ chi nhánh áp dụng thuế')
