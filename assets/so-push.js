@@ -104,6 +104,16 @@
                 if (it) { it._on = this.checked; }
                 count();
             });
+            // Công tắc "đẩy SO" riêng của từng shop — không liên quan công tắc đẩy HTsoft của quầy bán hàng.
+            $ov.on('click', '.c-so-toggle', function () {
+                if (st.running) { return; }
+                var $b = $(this), on = Number($b.data('on')) === 1;
+                if (on && !window.confirm('Bật ĐẨY SO cho shop này?\n\nChỉ cho phép đẩy phiếu BT của shop lên SO bằng nút này. Không thay đổi gì ở luồng bán hàng tại quầy.')) { return; }
+                $b.prop('disabled', true).text('Đang lưu…');
+                post('tgs_htsoft_api_so_toggle', { blog: $b.data('blog'), on: on ? 1 : 0 })
+                    .then(load)
+                    .catch(function (err) { window.alert(err.message || 'Không lưu được.'); $b.prop('disabled', false); });
+            });
             $ov.on('click', '.c-view', function () {
                 var it = st.items[$(this).closest('tr').data('i')];
                 if (it) { view(it); }
@@ -149,9 +159,11 @@
             $('#htaSoShops').html(
                 '<div style="margin-bottom:4px;color:#64748b;">API: <b>' + esc(data.api || '(chưa cấu hình)') + '</b></div>'
                 + ((data.shops || []).map(function (sh) {
-                    return '<span style="display:inline-block;margin:2px 12px 2px 0;"><b>' + esc(sh.shop) + '</b>: '
+                    return '<span style="display:inline-block;margin:2px 14px 2px 0;"><b>' + esc(sh.shop) + '</b>: '
                         + (sh.skip ? '<span style="color:#b91c1c">' + esc(sh.skip) + '</span>'
                             : (sh.n + ' phiếu, ' + sh.done + ' đã lên SO' + (sh.lock ? ' · khoá sổ đến ' + esc(sh.lock) : '')))
+                        + ' <button type="button" class="lnk c-so-toggle" data-blog="' + sh.blog + '" data-on="' + (sh.so_on ? 0 : 1) + '">'
+                        + (sh.so_on ? '[tắt đẩy SO]' : '[BẬT đẩy SO cho shop này]') + '</button>'
                         + '</span>';
                 }).join('') || 'Không có shop nào hợp lệ.')
             );
@@ -261,11 +273,16 @@
             if (pass === null) { return; }
             if (!pass) { window.alert('Chưa nhập mật khẩu.'); return; }
             st.pass = pass;
+            st.blogs = blogs;
             $btn.prop('disabled', true).text('Đang quét phiếu BT…');
-            post('tgs_htsoft_api_so_list', { blogs: JSON.stringify(blogs) })
-                .then(render)
+            load()
                 .catch(function (err) { window.alert(err.message || 'Không quét được.'); })
                 .then(function () { $btn.prop('disabled', false).text(LABEL); });
         });
+
+        // Quét lại danh sách phiếu của các shop đang chọn (dùng khi mở cửa sổ và sau khi bật / tắt đẩy SO).
+        function load() {
+            return post('tgs_htsoft_api_so_list', { blogs: JSON.stringify(st.blogs || []) }).then(render);
+        }
     });
 })(window.jQuery);

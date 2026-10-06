@@ -37,6 +37,7 @@ class TGS_HTsoft_Api_SO
         add_action('wp_ajax_tgs_htsoft_api_so_preview', [__CLASS__, 'ajax_preview']);
         add_action('wp_ajax_tgs_htsoft_api_so_push', [__CLASS__, 'ajax_push']);
         add_action('wp_ajax_tgs_htsoft_api_so_log', [__CLASS__, 'ajax_log']);
+        add_action('wp_ajax_tgs_htsoft_api_so_toggle', [__CLASS__, 'ajax_toggle']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue'], 30);
     }
 
@@ -104,6 +105,42 @@ class TGS_HTsoft_Api_SO
         return class_exists('TGS_BCTK_Vat_Shops') ? array_map('intval', (array) TGS_BCTK_Vat_Shops::active_blog_ids()) : [];
     }
 
+    /*
+     * CÔNG TẮC "CHO ĐẨY SO" THEO TỪNG SHOP — tách hẳn khỏi công tắc "đẩy HTsoft" của luồng bán hàng
+     * (TGS_POS_HTsoft_Invoice_Push::push_enabled). Bật / tắt ở đây KHÔNG đổi gì ở quầy: shop vẫn bán
+     * như đang bán. Lưu ở site option của network: danh sách blog_id được đẩy SO. Mặc định TẮT.
+     */
+    const OPT_SO_BLOGS = 'tgs_htsoft_api_so_blogs';
+
+    public static function so_blogs(): array
+    {
+        return array_values(array_unique(array_filter(array_map('intval', (array) get_site_option(self::OPT_SO_BLOGS, [])))));
+    }
+
+    public static function so_enabled(int $blog_id): bool
+    {
+        return in_array($blog_id, self::so_blogs(), true);
+    }
+
+    /** Bật / tắt đẩy SO cho một shop (cần mật khẩu như các thao tác đẩy). */
+    public static function ajax_toggle()
+    {
+        self::guard();
+        $blog_id = (int) ($_POST['blog'] ?? 0);
+        if ($blog_id <= 0 || !in_array($blog_id, self::allowed_blogs(), true) || !get_blog_details($blog_id)) {
+            wp_send_json_error(['message' => 'Shop không nằm trong danh sách áp dụng thuế.'], 400);
+        }
+        $on = !empty($_POST['on']);
+        $list = array_diff(self::so_blogs(), [$blog_id]);
+        if ($on) {
+            $list[] = $blog_id;
+        }
+        update_site_option(self::OPT_SO_BLOGS, array_values($list));
+        self::log(['blog' => $blog_id, 'shop' => self::shop_code($blog_id), 'ok' => 1,
+            'msg' => $on ? 'BẬT đẩy SO cho shop' : 'TẮT đẩy SO cho shop']);
+        wp_send_json_success(['on' => $on ? 1 : 0]);
+    }
+
     /** Lý do shop (blog hiện tại) không đẩy được; '' = được. */
     private static function shop_block(): string
     {
@@ -111,8 +148,8 @@ class TGS_HTsoft_Api_SO
         if (!class_exists('TGS_POS_HTsoft_Invoice_Push')) {
             return 'Shop chưa nạp lớp đẩy HTsoft của POS';
         }
-        if (!TGS_POS_HTsoft_Invoice_Push::push_enabled()) {
-            return 'Shop đang TẮT đẩy HTsoft';
+        if (!self::so_enabled(get_current_blog_id())) {
+            return 'Shop chưa bật đẩy SO';
         }
         $L = $wpdb->prefix . 'local_ledger';
         if ($wpdb->get_var($wpdb->prepare('SHOW TABLES LIKE %s', $L)) !== $L) {
@@ -146,10 +183,21 @@ class TGS_HTsoft_Api_SO
 
     /* ───────────────────────────── dấu "đã lên SO" trên phiếu ───────────────────────────── */
 
+    /**
+     * Dấu của phiếu. Dấu "đã lên SO" chỉ tính khi được ghi với ĐÚNG địa chỉ API đang cấu hình: phiếu
+     * đẩy thử lên bản tập huấn không được coi là đã đẩy khi chuyển sang bản chính (dấu cũ không ghi
+     * địa chỉ cũng coi là chưa đẩy).
+     */
     private static function read_mark(string $advance_meta): array
     {
         $m = json_decode($advance_meta, true);
-        return (is_array($m) && isset($m[self::META_KEY]) && is_array($m[self::META_KEY])) ? $m[self::META_KEY] : [];
+        $mark = (is_array($m) && isset($m[self::META_KEY]) && is_array($m[self::META_KEY])) ? $m[self::META_KEY] : [];
+        if (!empty($mark['ok']) && (string) ($mark['api'] ?? '') !== TGS_HTsoft_Api_Config::get()['base_url']) {
+            $mark['ok'] = 0;
+            $mark['msg'] = 'Đã đẩy lúc ' . substr((string) ($mark['at'] ?? ''), 0, 16) . ' lên một địa chỉ API khác'
+                . (($mark['api'] ?? '') !== '' ? ' (' . $mark['api'] . ')' : '') . ' — chưa có ở địa chỉ hiện tại.';
+        }
+        return $mark;
     }
 
     private static function save_mark(int $sale_id, array $mark): void
@@ -413,7 +461,8 @@ class TGS_HTsoft_Api_SO
             switch_to_blog($blog_id);
             try {
                 $shop = self::shop_code($blog_id);
-                $info = ['blog' => $blog_id, 'shop' => $shop ?: ('#' . $blog_id), 'n' => 0, 'done' => 0, 'skip' => self::shop_block()];
+                $info = ['blog' => $blog_id, 'shop' => $shop ?: ('#' . $blog_id), 'n' => 0, 'done' => 0, 'skip' => self::shop_block(),
+                    'so_on' => self::so_enabled($blog_id) ? 1 : 0];
                 if ($info['skip'] !== '') {
                     $shops[] = $info;
                     continue;
@@ -588,7 +637,8 @@ class TGS_HTsoft_Api_SO
             $res['warn'] = $b['warn'];
 
             $mark = [
-                'ok' => $ok ? 1 : 0, 'code' => $res['so'], 'code_z' => $res['so_z'],
+                'ok' => $ok ? 1 : 0, 'api' => TGS_HTsoft_Api_Config::get()['base_url'],
+                'code' => $res['so'], 'code_z' => $res['so_z'],
                 'order_id' => $order_ids[0] ?? '', 'at' => current_time('mysql'),
                 'msg' => $ok ? '' : mb_substr($res['message'], 0, 300),
             ];
