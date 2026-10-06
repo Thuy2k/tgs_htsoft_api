@@ -44,7 +44,8 @@ class TGS_HTsoft_Api_SO
     /** Nạp nút vào màn "Quản lý phiếu xuất bán (VAT)" của tgs-bc-tk. */
     public static function enqueue()
     {
-        if (!wp_script_is('tgs-bctk-vat-report', 'enqueued') || (($_GET['view'] ?? '') !== 'bctk-vat-sales')) {
+        $view = (string) ($_GET['view'] ?? '');
+        if (!wp_script_is('tgs-bctk-vat-report', 'enqueued') || !in_array($view, ['bctk-vat-sales', 'bctk-vat-adjust'], true)) {
             return;
         }
         $file = TGS_HTSOFT_API_DIR . 'assets/so-push.js';
@@ -60,6 +61,7 @@ class TGS_HTsoft_Api_SO
             'nonce'   => wp_create_nonce(self::NONCE),
             'batch'   => self::BATCH,
             'ready'   => TGS_HTsoft_Api_Config::ready() ? 1 : 0,
+            'kind'    => $view === 'bctk-vat-adjust' ? 'return' : 'sale',
         ]);
     }
 
@@ -167,12 +169,12 @@ class TGS_HTsoft_Api_SO
      * Mã SO của một phiếu BT: 5 ký tự đầu mã shop + 6 số cuối mã BT (+ 'Z'). Tối đa 12 ký tự.
      * Vd shop 18005, phiếu BTAA00000410 → 18005000410; phiếu Z → 18005000410Z.
      */
-    public static function so_code(string $shop_code, string $bt_code, bool $is_z = false): string
+    public static function so_code(string $shop_code, string $bt_code, bool $is_z = false, string $suffix = ''): string
     {
         $prefix = substr(preg_replace('/[^A-Za-z0-9]/', '', $shop_code), 0, 5);
         $digits = preg_replace('/\D/', '', $bt_code);
         $num = str_pad(substr($digits, -6), 6, '0', STR_PAD_LEFT);
-        return strtoupper($prefix) . $num . ($is_z ? 'Z' : '');
+        return strtoupper($prefix) . $num . ($is_z ? 'Z' : '') . $suffix;
     }
 
     private static function guid($v): string
@@ -500,6 +502,138 @@ class TGS_HTsoft_Api_SO
         ];
     }
 
+    /* ───────────────────────────── phiếu hoàn (hàng bán trả lại) ───────────────────────────── */
+
+    const TYPE_RETURN   = 11;
+    const RETURN_SUFFIX = 'R';   // mã SO của phiếu hoàn = mã shop + 6 số cuối + 'R' — không đụng mã SO của phiếu bán
+
+    /** Loại phiếu của lượt gọi: 'sale' (phiếu bán) | 'return' (phiếu hoàn / hàng bán trả lại). */
+    private static function kind(): string
+    {
+        return (($_POST['kind'] ?? '') === 'return') ? 'return' : 'sale';
+    }
+
+    private static function build_any(int $id): array
+    {
+        return self::kind() === 'return' ? self::build_return($id) : self::build($id);
+    }
+
+    /**
+     * Dựng đơn SO của MỘT phiếu hoàn còn mã BT. Dòng hoàn nằm ngay trên phiếu hoàn; số lượng / tiền gửi
+     * DƯƠNG như phiếu bán. Để người chuyển SO bên HTsoft nhận ra đây là HÀNG BÁN TRẢ LẠI: mã SO kết
+     * thúc bằng 'R', lý do = lý do nhập trả hàng (NTH1 — cùng filter với đường SQL), ghi chú mở đầu
+     * "TRA LAI" kèm mã hoá đơn bán gốc.
+     */
+    public static function build_return(int $return_id): array
+    {
+        global $wpdb;
+        $L = $wpdb->prefix . 'local_ledger';
+        $ret = $wpdb->get_row($wpdb->prepare(
+            "SELECT * FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=%d AND (is_deleted=0 OR is_deleted IS NULL)",
+            $return_id,
+            self::TYPE_RETURN
+        ));
+        if (!$ret) {
+            return ['error' => 'Không tìm thấy phiếu hoàn.'];
+        }
+        $bt = trim((string) $ret->local_ledger_code);
+        if (stripos($bt, 'BT') !== 0) {
+            return ['error' => 'Phiếu hoàn đã có mã HTsoft ' . $bt . ' — không đẩy SO.'];
+        }
+        $blog_id = get_current_blog_id();
+        if (class_exists('TGS_Book_Close') && TGS_Book_Close::is_locked((string) $ret->created_at, $blog_id)) {
+            return ['error' => 'Phiếu đã khoá sổ — không đẩy.'];
+        }
+        try {
+            $branch = (array) self::pos('branch_context');
+            $kho    = trim((string) ($branch['kho_code'] ?? ''));
+            $cust   = (array) self::pos('customer_of', $ret->local_ledger_person_id);
+            $lines  = (array) self::pos('build_lines', $return_id);
+            $httt   = (array) self::pos('httt_by_name', (string) apply_filters('tgs_pos_htsoft_return_httt_name', 'Công nợ', $return_id, false));
+        } catch (\Throwable $e) {
+            return ['error' => 'Không gom được dữ liệu phiếu hoàn: ' . $e->getMessage()];
+        }
+        if ($kho === '') {
+            return ['error' => 'Shop chưa gán mã kho.'];
+        }
+        if (!$lines) {
+            return ['error' => 'Phiếu hoàn không có dòng hàng hợp lệ.'];
+        }
+        $sale_code = self::sale_code((int) $ret->user_id, (string) ($branch['srid'] ?? ''));
+        if ($sale_code === '') {
+            return ['error' => 'Không tìm được mã nhân viên HTsoft cho chi nhánh này.'];
+        }
+
+        // Hoá đơn bán gốc (phiếu cha) — để người chuyển SO biết trả lại cho hoá đơn nào.
+        $goc = '';
+        $src = (int) ($ret->local_ledger_parent_id ?? 0);
+        if ($src > 0) {
+            $goc = trim((string) $wpdb->get_var($wpdb->prepare("SELECT local_ledger_code FROM {$L} WHERE local_ledger_id=%d", $src)));
+        }
+        $created = (string) ($ret->created_at ?: current_time('mysql'));
+        try {
+            $ts = (new DateTime($created, wp_timezone()))->getTimestamp();
+        } catch (\Throwable $e) {
+            $ts = time();
+        }
+        $note = trim(preg_replace('/\[Chưa đẩy HTsoft\]/u', '', (string) $ret->local_ledger_note));
+        $code = self::so_code(self::shop_code($blog_id), $bt, false, self::RETURN_SUFFIX);
+        if (strlen($code) > self::CODE_MAX) {
+            return ['error' => 'Mã SO ' . $code . ' dài quá ' . self::CODE_MAX . ' ký tự.'];
+        }
+        $details = self::lines_to_details($lines, $kho);
+
+        $o = [
+            'orderCode'     => $code,
+            'CusCode'       => self::cus_code($cust),
+            'saleCode'      => $sale_code,
+            'createdOn'     => $ts,
+            'onlineOrderId' => $bt,
+            'ReasonCode'    => (string) apply_filters('tgs_pos_htsoft_return_reason_code', 'NTH1'),
+        ];
+        if (trim((string) ($cust['name'] ?? '')) !== '') {
+            $o['orderOwnerName'] = (string) $cust['name'];
+        }
+        if (trim((string) ($cust['phone'] ?? '')) !== '') {
+            $o['orderOwnerMobile'] = (string) $cust['phone'];
+            $o['orderOwnerPhone']  = (string) $cust['phone'];
+        }
+        if ($g = self::guid($httt['id'] ?? '')) {
+            $o['paymentTypeId'] = $g;
+        }
+        $o['orderReceiveNote'] = mb_substr(trim('TRA LAI ' . $bt . ($goc !== '' ? ' (HD goc ' . $goc . ')' : '') . ' '
+            . substr($created, 0, 16) . ' ' . $note), 0, 100);
+        $o['orderValue']   = array_sum(array_column($details, 'Amount'));
+        $o['orderDetails'] = $details;
+
+        $warn = ['Đây là phiếu HOÀN: lên SO với số dương, mã kết thúc bằng R, lý do ' . $o['ReasonCode'] . ' — bên HTsoft phải chuyển thành hàng bán trả lại, KHÔNG chuyển thành hoá đơn bán.'];
+        if ($goc === '') {
+            $warn[] = 'Phiếu hoàn không gắn hoá đơn bán gốc.';
+        } elseif (stripos($goc, 'BT') === 0) {
+            $warn[] = 'Hoá đơn bán gốc ' . $goc . ' còn mã BT (chưa có trên HTsoft).';
+        }
+        $no_unit = [];
+        foreach ($details as $d) {
+            if (empty($d['UnitID'])) {
+                $no_unit[$d['UnitName'] ?? '(trống)'] = 1;
+            }
+        }
+        if ($no_unit) {
+            $warn[] = 'Chưa có mã đơn vị HTsoft cho: ' . implode(', ', array_keys($no_unit)) . '.';
+        }
+        if ($o['CusCode'] === 'KL' && trim((string) ($cust['code'] ?? '')) !== '') {
+            $warn[] = 'Khách chưa có mã HTsoft — gửi là khách lẻ (KL).';
+        }
+        return [
+            'error'  => '',
+            'bt'     => $bt,
+            'orders' => [$o],
+            'codes'  => ['main' => $code, 'z' => ''],
+            'amt'    => $o['orderValue'],
+            'warn'   => $warn,
+        ];
+    }
+
     /* ───────────────────────────── AJAX: liệt kê ───────────────────────────── */
 
     public static function ajax_list()
@@ -510,6 +644,7 @@ class TGS_HTsoft_Api_SO
         $want = array_filter(array_map('intval', (array) json_decode((string) wp_unslash($_POST['blogs'] ?? '[]'), true)));
         $blogs = $want ? array_values(array_intersect($allowed, $want)) : $allowed;
         $days = max(1, min(120, (int) ($_POST['days'] ?? 45)));
+        $is_ret = self::kind() === 'return';
         $since = wp_date('Y-m-d 00:00:00', current_time('timestamp', true) - $days * DAY_IN_SECONDS);
 
         $items = [];
@@ -531,30 +666,47 @@ class TGS_HTsoft_Api_SO
                 $lock = class_exists('TGS_Book_Close') ? (string) TGS_Book_Close::at($blog_id) : '';
                 $from = ($lock !== '' && $lock > $since) ? $lock : $since;
                 $info['lock'] = $lock;
-                // Phiếu bán CHÍNH còn mã BT (phiếu Z đi theo phiếu chính).
-                $rows = $wpdb->get_results($wpdb->prepare(
-                    "SELECT s.local_ledger_id id, s.local_ledger_code code, s.created_at, s.local_ledger_total_amount amt,
-                            s.local_ledger_advance_meta adv,
-                            (SELECT z.local_ledger_code FROM {$L} z
-                              WHERE z.local_ledger_parent_id = s.local_ledger_id AND z.local_ledger_type = 10
-                                AND (z.is_deleted = 0 OR z.is_deleted IS NULL) LIMIT 1) z_code
-                       FROM {$L} s
-                       LEFT JOIN {$L} pp ON pp.local_ledger_id = s.local_ledger_parent_id
-                      WHERE s.local_ledger_type = 10 AND s.local_ledger_code LIKE %s
-                        AND (s.is_deleted = 0 OR s.is_deleted IS NULL)
-                        AND (pp.local_ledger_id IS NULL OR pp.local_ledger_type <> 10)
-                        AND s.created_at > %s
-                      ORDER BY s.created_at, s.local_ledger_id",
-                    'BT%',
-                    $from
-                ), ARRAY_A);
+                if ($is_ret) {
+                    // Phiếu hoàn (hàng bán trả lại) còn mã BT.
+                    $rows = $wpdb->get_results($wpdb->prepare(
+                        "SELECT s.local_ledger_id id, s.local_ledger_code code, s.created_at, s.local_ledger_total_amount amt,
+                                s.local_ledger_advance_meta adv, '' z_code
+                           FROM {$L} s
+                          WHERE s.local_ledger_type = %d AND s.local_ledger_code LIKE %s
+                            AND (s.is_deleted = 0 OR s.is_deleted IS NULL)
+                            AND s.created_at > %s
+                          ORDER BY s.created_at, s.local_ledger_id",
+                        self::TYPE_RETURN,
+                        'BT%',
+                        $from
+                    ), ARRAY_A);
+                } else {
+                    // Phiếu bán CHÍNH còn mã BT (phiếu Z đi theo phiếu chính).
+                    $rows = $wpdb->get_results($wpdb->prepare(
+                        "SELECT s.local_ledger_id id, s.local_ledger_code code, s.created_at, s.local_ledger_total_amount amt,
+                                s.local_ledger_advance_meta adv,
+                                (SELECT z.local_ledger_code FROM {$L} z
+                                  WHERE z.local_ledger_parent_id = s.local_ledger_id AND z.local_ledger_type = 10
+                                    AND (z.is_deleted = 0 OR z.is_deleted IS NULL) LIMIT 1) z_code
+                           FROM {$L} s
+                           LEFT JOIN {$L} pp ON pp.local_ledger_id = s.local_ledger_parent_id
+                          WHERE s.local_ledger_type = 10 AND s.local_ledger_code LIKE %s
+                            AND (s.is_deleted = 0 OR s.is_deleted IS NULL)
+                            AND (pp.local_ledger_id IS NULL OR pp.local_ledger_type <> 10)
+                            AND s.created_at > %s
+                          ORDER BY s.created_at, s.local_ledger_id",
+                        'BT%',
+                        $from
+                    ), ARRAY_A);
+                }
+
                 foreach ((array) $rows as $r) {
                     $mark = self::read_mark((string) $r['adv']);
                     $done = !empty($mark['ok']);
                     $items[] = [
                         'blog' => $blog_id, 'shop' => $info['shop'], 'id' => (int) $r['id'],
                         'code' => (string) $r['code'], 'z' => (string) ($r['z_code'] ?? ''),
-                        'so'   => self::so_code($shop, (string) $r['code']),
+                        'so'   => self::so_code($shop, (string) $r['code'], false, $is_ret ? self::RETURN_SUFFIX : ''),
                         'at'   => (string) $r['created_at'], 'amt' => (float) $r['amt'],
                         'done' => $done ? 1 : 0,
                         'done_at' => (string) ($mark['at'] ?? ''),
@@ -588,7 +740,7 @@ class TGS_HTsoft_Api_SO
         switch_to_blog($blog_id);
         try {
             $blk = self::shop_block();
-            $b = $blk !== '' ? ['error' => $blk] : self::build($id);
+            $b = $blk !== '' ? ['error' => $blk] : self::build_any($id);
         } finally {
             restore_current_blog();
         }
@@ -632,7 +784,7 @@ class TGS_HTsoft_Api_SO
             switch_to_blog($blog_id);
             try {
                 $blk = self::shop_block();
-                $b = $blk !== '' ? ['error' => $blk] : self::build($id);
+                $b = $blk !== '' ? ['error' => $blk] : self::build_any($id);
             } catch (\Throwable $e) {
                 $b = ['error' => 'Lỗi khi dựng đơn: ' . $e->getMessage()];
             } finally {
@@ -717,7 +869,7 @@ class TGS_HTsoft_Api_SO
                 restore_current_blog();
             }
             self::log([
-                'blog' => $res['blog'], 'shop' => $shop, 'id' => $res['id'], 'bt' => $b['bt'],
+                'blog' => $res['blog'], 'shop' => $shop, 'id' => $res['id'], 'bt' => $b['bt'], 'kind' => self::kind(),
                 'so' => $res['so'], 'so_z' => $res['so_z'], 'order_id' => $order_ids[0] ?? '',
                 'ok' => $ok ? 1 : 0, 'msg' => $res['message'], 'amt' => $b['amt'],
                 'lines' => array_sum(array_map(static function ($o) { return count($o['orderDetails']); }, $b['orders'])),

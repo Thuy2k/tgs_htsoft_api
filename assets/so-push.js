@@ -12,7 +12,10 @@
         var $head = $('.bctk-result__head');
         if (!$head.length || $('#htaSoBtn').length) { return; }
 
-        var LABEL = '⬆ Đẩy phiếu BT lên SO (API)';
+        // Màn phiếu điều chỉnh giảm: đẩy PHIẾU HOÀN (hàng bán trả lại) lên SO; màn phiếu xuất bán: đẩy phiếu bán.
+        var RET = CFG.kind === 'return';
+        var WHAT = RET ? 'phiếu hoàn (hàng bán trả lại)' : 'phiếu bán';
+        var LABEL = RET ? '⬆ Đẩy phiếu hoàn BT lên SO (API)' : '⬆ Đẩy phiếu BT lên SO (API)';
         var $btn = $('<button type="button" id="htaSoBtn" '
             + 'style="margin-left:10px;padding:6px 14px;border:1px solid #7c3aed;border-radius:6px;'
             + 'background:#f5f3ff;color:#5b21b6;font-weight:600;cursor:pointer;">' + LABEL + '</button>');
@@ -27,6 +30,7 @@
             fd.append('action', action);
             fd.append('nonce', CFG.nonce);
             fd.append('password', st.pass);
+            fd.append('kind', RET ? 'return' : 'sale');
             Object.keys(data || {}).forEach(function (k) { fd.append(k, data[k]); });
             return fetch(CFG.ajaxUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
                 .then(function (res) {
@@ -68,14 +72,14 @@
                 + '<div style="position:absolute;inset:0;background:rgba(15,23,42,.45);"></div>'
                 + '<div style="position:relative;margin:3vh auto;width:min(1200px,95vw);max-height:94vh;display:flex;flex-direction:column;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.25);">'
                 + '<div style="padding:14px 18px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;">'
-                + '<strong style="font-size:15px;">Đẩy phiếu bán còn mã BT lên HTsoft thành đơn đặt hàng (SO) — qua API</strong>'
+                + '<strong style="font-size:15px;">Đẩy ' + WHAT + ' còn mã BT lên HTsoft thành đơn đặt hàng (SO) — qua API</strong>'
                 + '<span id="htaSoSum" style="color:#64748b;font-size:12.5px;"></span>'
                 + '<button type="button" id="htaSoX" style="margin-left:auto;border:0;background:none;font-size:20px;cursor:pointer;">×</button></div>'
                 + '<div id="htaSoShops" style="flex-shrink:0;padding:10px 18px;border-bottom:1px solid #e2e8f0;font-size:12.5px;color:#334155;max-height:16vh;overflow:auto;"></div>'
                 + '<div style="padding:8px 18px;"><div style="height:8px;background:#e2e8f0;border-radius:99px;overflow:hidden;"><div id="htaSoBar" style="height:100%;width:0;background:#7c3aed;"></div></div></div>'
                 + '<div id="htaSoMain" style="flex:1;min-height:0;overflow:auto;padding:0 18px;"><table><thead><tr>'
                 + '<th><input type="checkbox" id="htaSoAll" title="Tích / bỏ tích tất cả phiếu chưa lên SO"></th>'
-                + '<th>#</th><th>Shop</th><th>Mã bên mình</th><th>Mã SO sẽ tạo</th><th>Phiếu Z</th><th>Ngày bán</th>'
+                + '<th>#</th><th>Shop</th><th>Mã bên mình</th><th>Mã SO sẽ tạo</th><th>Phiếu Z</th><th>' + (RET ? 'Ngày hoàn' : 'Ngày bán') + '</th>'
                 + '<th style="text-align:right">Tiền</th><th>Trạng thái</th><th>Kết quả</th><th></th></tr></thead><tbody id="htaSoRows"></tbody></table></div>'
                 + '<div id="htaSoView" style="display:none;padding:10px 18px;border-top:1px solid #e2e8f0;">'
                 + '<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;"><b id="htaSoViewTitle" style="font-size:13px;"></b>'
@@ -206,11 +210,14 @@
                     + '<td style="text-align:right">' + money(it.amt) + '</td>'
                     + '<td class="c-st">' + stHtml(it) + '</td><td class="c-msg">' + esc(it._msg) + '</td>'
                     + '<td><button type="button" class="lnk c-view">Xem</button></td></tr>';
-            }).join('') || '<tr><td colspan="11" style="padding:18px;color:#64748b;">Không có phiếu bán mã BT nào trong các shop đã chọn.</td></tr>');
+            }).join('') || '<tr><td colspan="11" style="padding:18px;color:#64748b;">Không có ' + WHAT + ' mã BT nào trong các shop đã chọn.</td></tr>');
             $('#htaSoAll').prop('checked', st.items.some(function (x) { return x._on; }));
             $('#htaSoBar').css('width', '0');
             $('#htaSoView').hide();
-            $('#htaSoNote').text('Chỉ phiếu BÁN (phiếu Z đi theo phiếu chính). Phiếu hoàn chưa đẩy được qua API. Bỏ tích phiếu không muốn đẩy; bấm "Xem" để coi dữ liệu sẽ gửi.');
+            $('#htaSoNote').text((RET
+                ? 'Chỉ phiếu HOÀN. Lên SO với mã kết thúc bằng R, lý do nhập trả hàng, ghi chú "TRA LAI" — bên HTsoft chuyển SO thành hàng bán trả lại.'
+                : 'Chỉ phiếu BÁN (phiếu Z đi theo phiếu chính). Phiếu hoàn đẩy ở màn Quản lý phiếu điều chỉnh giảm.')
+                + ' Bỏ tích phiếu không muốn đẩy; bấm "Xem" để coi dữ liệu sẽ gửi.');
             $('#htaSoGo').show();
             $('#htaSoStop').hide().prop('disabled', false).text('Dừng');
             count();
@@ -304,9 +311,9 @@
                 }
             }
             var pass = window.prompt(
-                'ĐẨY PHIẾU BÁN CÒN MÃ BT LÊN HTSOFT THÀNH ĐƠN ĐẶT HÀNG (SO) — QUA API\n\n'
+                'ĐẨY ' + WHAT.toUpperCase() + ' CÒN MÃ BT LÊN HTSOFT THÀNH ĐƠN ĐẶT HÀNG (SO) — QUA API\n\n'
                 + 'Quét ' + (blogs.length ? blogs.length + ' chi nhánh đang tích' : 'TẤT CẢ chi nhánh áp dụng thuế')
-                + ': phiếu bán còn mã BT, tạo sau mốc khoá sổ.\n'
+                + ': ' + WHAT + ' còn mã BT, tạo sau mốc khoá sổ.\n'
                 + 'Bước này mới chỉ LIỆT KÊ để bạn xem và bỏ tích — chưa gửi gì.\n\nNhập mật khẩu:'
             );
             if (pass === null) { return; }
