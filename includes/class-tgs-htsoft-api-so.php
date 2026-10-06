@@ -251,8 +251,53 @@ class TGS_HTsoft_Api_SO
         return ($code === '' || stripos($code, 'CUS-') === 0) ? 'KL' : $code;
     }
 
+    /*
+     * MÃ ĐƠN VỊ TÍNH. Màn SO của HTsoft hiện đơn vị theo MÃ (UnitID = UNIT.ID), gửi tên (UnitName)
+     * thì cột Đơn vị hiện 0. Phiếu bên mình chỉ có TÊN đơn vị; hàm API GetListUnit đang hỏng phía
+     * HTsoft và đường SQL không đăng nhập được, nên bảng tên → mã để SẴN ở đây (chép từ bảng UNIT của
+     * HTsoft ngày 06/10/2026, 74 đơn vị). HTsoft thêm đơn vị mới thì bổ sung vào hằng UNITS, hoặc vào
+     * site option tgs_htsoft_api_unit_extra dạng ['Tên đơn vị' => mã] (đè lên bảng sẵn).
+     */
+    const OPT_UNITS = 'tgs_htsoft_api_unit_extra';
+    const UNITS = [
+        'Gói' => 1, 'Lọ' => 2, 'Cây' => 3, 'Can' => 4, 'Vỉ' => 5, 'Túi' => 6, 'Bịch' => 7, 'Lốc' => 8,
+        'Bộ' => 9, 'Thanh' => 10, 'Cái' => 11, 'Thùng' => 12, 'Tuýp' => 13, 'Tuyp' => 14, 'Chai' => 15,
+        'Hộp' => 16, 'Cuộn' => 17, 'Lon' => 18, 'Kg' => 19, 'Con' => 20, 'VND' => 21, 'Quyển' => 22,
+        'Chiếc' => 23, 'Đôi' => 24, 'Điểm' => 25, 'Cặp' => 26, 'Lốc_8' => 27, 'Vỉ_6' => 28, 'Quả' => 29,
+        'Combo' => 30, 'Lốc_6' => 31, 'Dây' => 32, 'Lốc_4' => 33, 'Vỉ_4' => 34, 'Lốc_5' => 35, 'Ổ' => 36,
+        'Set' => 37, 'Bình' => 38, 'Cuốn' => 39, 'Ly' => 40, 'Ca' => 41, 'Ống' => 42, 'Lốc_3' => 43,
+        'Giỏ' => 44, 'Kg_140' => 45, 'Kg_100' => 46, 'Kg_32' => 47, 'Kg_85' => 48, 'Kg_90' => 49,
+        'Que' => 50, 'Kg_170' => 51, 'Kg_142' => 52, 'Kg_104' => 53, 'Kg_38' => 54, 'Gam' => 55,
+        'Tập' => 56, 'Thỏi' => 57, 'Vỉ_2' => 58, 'Tờ' => 59, 'Viên' => 60, 'Hũ' => 61, 'Hộp_6c' => 62,
+        'Túi_5c' => 63, 'Set_5' => 64, 'Set_3c' => 65, 'Set_3' => 66, 'Hộp_8T' => 67, 'Hộp_7T' => 68,
+        'Bánh' => 69, 'Cốc' => 70, 'm2' => 71, 'Lốc_9' => 72, 'Miếng' => 73, 'Túi_10c' => 74,
+    ];
+
+    private static function unit_key(string $name): string
+    {
+        return mb_strtolower(trim($name), 'UTF-8');
+    }
+
+    /** ['tên đơn vị (chữ thường)' => UnitID]. */
+    public static function unit_ids(): array
+    {
+        static $map = null;
+        if ($map === null) {
+            $map = [];
+            foreach ([self::UNITS, (array) get_site_option(self::OPT_UNITS, [])] as $src) {
+                foreach ($src as $name => $id) {
+                    if (is_scalar($id) && (int) $id > 0) {
+                        $map[self::unit_key((string) $name)] = (int) $id;
+                    }
+                }
+            }
+        }
+        return $map;
+    }
+
     private static function lines_to_details(array $lines, string $kho): array
     {
+        $units = self::unit_ids();
         $out = [];
         foreach ($lines as $l) {
             $rate = (float) ($l['qty_rate'] ?? 1);
@@ -279,6 +324,10 @@ class TGS_HTsoft_Api_SO
             ];
             if (trim((string) ($l['unit_name'] ?? '')) !== '') {
                 $d['UnitName'] = trim((string) $l['unit_name']);
+                $uid = (int) ($units[self::unit_key($d['UnitName'])] ?? 0);
+                if ($uid > 0) {
+                    $d['UnitID'] = $uid;
+                }
             }
             if (trim((string) ($l['ghi_chu'] ?? '')) !== '') {
                 $d['Note'] = (string) $l['ghi_chu'];
@@ -423,6 +472,17 @@ class TGS_HTsoft_Api_SO
                 $warn[] = 'Có dòng bán theo đơn vị quy đổi — kiểm số lượng / đơn giá trên HTsoft.';
                 break;
             }
+        }
+        $no_unit = [];
+        foreach ($orders as $o) {
+            foreach ($o['orderDetails'] as $d) {
+                if (empty($d['UnitID'])) {
+                    $no_unit[$d['UnitName'] ?? '(trống)'] = 1;
+                }
+            }
+        }
+        if ($no_unit) {
+            $warn[] = 'Chưa có mã đơn vị HTsoft cho: ' . implode(', ', array_keys($no_unit)) . ' — SO sẽ trống cột Đơn vị ở các dòng này.';
         }
         if (count($payments) > 1) {
             $warn[] = 'Đơn trả bằng nhiều hình thức — SO chỉ mang một hình thức đại diện.';
