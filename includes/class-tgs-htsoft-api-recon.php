@@ -17,6 +17,9 @@ if (!defined('ABSPATH')) {
  * Ghép: (1) mã BT nằm trong Diễn giải (hoá đơn sinh từ SO mang ghi chú "BTAA… <ngày giờ>");
  *       (2) Số phiếu HTsoft trùng mã phiếu bên mình (phiếu đã lên bằng đường cũ, mã thật).
  *
+ * Màn "Quản lý phiếu điều chỉnh giảm (VAT)" có cùng nút cho PHIẾU HOÀN (kind = 'return', sổ loại 11) ↔ phiếu hàng
+ * bán trả lại của HTsoft; tiền so theo giá trị tuyệt đối.
+ *
  * Kết quả ghép lưu ngay trên phiếu: advance_meta.htsoft_ref = {code, n, total, date, at} — hiện ở cột
  * "Số phiếu HTsoft" cuối bảng bc-tk và đi theo khi xuất Excel. KHÔNG sửa ghi chú, KHÔNG đổi mã phiếu.
  */
@@ -30,12 +33,14 @@ class TGS_HTsoft_Api_Recon
     {
         add_action('wp_ajax_tgs_htsoft_api_recon_local', [__CLASS__, 'ajax_local']);
         add_action('wp_ajax_tgs_htsoft_api_recon_save', [__CLASS__, 'ajax_save']);
+        add_action('wp_ajax_tgs_htsoft_api_recon_set', [__CLASS__, 'ajax_set']);
         add_action('admin_enqueue_scripts', [__CLASS__, 'enqueue'], 31);
     }
 
     public static function enqueue()
     {
-        if (!wp_script_is('tgs-bctk-vat-report', 'enqueued') || (($_GET['view'] ?? '') !== 'bctk-vat-sales')) {
+        $view = (string) ($_GET['view'] ?? '');
+        if (!wp_script_is('tgs-bctk-vat-report', 'enqueued') || !in_array($view, ['bctk-vat-sales', 'bctk-vat-adjust'], true)) {
             return;
         }
         // Cùng bản SheetJS mà màn "Trợ giúp đối soát" của POS đang dùng.
@@ -51,6 +56,7 @@ class TGS_HTsoft_Api_Recon
         wp_localize_script('tgs-htsoft-api-recon', 'tgsHtsoftApiRecon', [
             'ajaxUrl' => admin_url('admin-ajax.php'),
             'nonce'   => wp_create_nonce(self::NONCE),
+            'kind'    => $view === 'bctk-vat-adjust' ? 'return' : 'sale',
         ]);
     }
 
@@ -61,6 +67,12 @@ class TGS_HTsoft_Api_Recon
         if (!current_user_can($cap)) {
             wp_send_json_error(['message' => 'Không có quyền đối soát.'], 403);
         }
+    }
+
+    /** Loại sổ của lượt gọi: 10 = phiếu bán, 11 = phiếu hoàn (màn phiếu điều chỉnh giảm). */
+    private static function ledger_type(): int
+    {
+        return (($_POST['kind'] ?? '') === 'return') ? 11 : 10;
     }
 
     /** Shop được xem: trong "Shop áp dụng thuế" — cùng phạm vi với bảng bc-tk. */
@@ -113,6 +125,7 @@ class TGS_HTsoft_Api_Recon
             }
         }
         $codes = array_keys($codes);
+        $type = self::ledger_type();
 
         $rows = [];
         $shops = [];
@@ -135,23 +148,26 @@ class TGS_HTsoft_Api_Recon
                 }
                 $found = $wpdb->get_results($wpdb->prepare(
                     "SELECT s.local_ledger_id id, s.local_ledger_code code, s.created_at, s.local_ledger_total_amount amt,
-                            (pp.local_ledger_id IS NOT NULL) is_z, pp.local_ledger_code parent_code,
+                            pp.local_ledger_code parent_code,
                             JSON_UNQUOTE(JSON_EXTRACT(s.local_ledger_advance_meta, '$.htsoft_so.code'))   so,
                             JSON_UNQUOTE(JSON_EXTRACT(pp.local_ledger_advance_meta, '$.htsoft_so.code_z')) so_z,
                             JSON_UNQUOTE(JSON_EXTRACT(s.local_ledger_advance_meta, '$.htsoft_ref.code'))  ref
                        FROM {$L} s
                        LEFT JOIN {$L} pp ON pp.local_ledger_id = s.local_ledger_parent_id AND pp.local_ledger_type = 10
-                      WHERE s.local_ledger_type = 10 AND (s.is_deleted = 0 OR s.is_deleted IS NULL) AND {$where}
+                      WHERE s.local_ledger_type = %d AND (s.is_deleted = 0 OR s.is_deleted IS NULL) AND {$where}
                       ORDER BY s.created_at, s.local_ledger_id",
+                    $type,
                     ...$args
                 ), ARRAY_A);
                 foreach ((array) $found as $r) {
                     $at = (string) $r['created_at'];
+                    // Phiếu bán có cha là phiếu bán = phiếu Z. Phiếu hoàn có cha là phiếu bán = hoá đơn gốc.
+                    $is_z = ($type === 10 && (string) ($r['parent_code'] ?? '') !== '') ? 1 : 0;
                     $rows[] = [
                         'blog' => $blog_id, 'shop' => $shop, 'id' => (int) $r['id'],
                         'code' => trim((string) $r['code']), 'at' => $at, 'amt' => (float) $r['amt'],
-                        'is_z' => (int) $r['is_z'], 'parent' => (string) ($r['parent_code'] ?? ''),
-                        'so'   => (string) ((int) $r['is_z'] ? ($r['so_z'] ?? '') : ($r['so'] ?? '')),
+                        'is_z' => $is_z, 'parent' => (string) ($r['parent_code'] ?? ''),
+                        'so'   => (string) ($is_z ? ($r['so_z'] ?? '') : ($r['so'] ?? '')),
                         'ref'  => (string) ($r['ref'] ?? ''),
                         'in_range' => (substr($at, 0, 10) >= $from && substr($at, 0, 10) <= $to) ? 1 : 0,
                     ];
@@ -174,6 +190,7 @@ class TGS_HTsoft_Api_Recon
             wp_send_json_error(['message' => 'Không có phiếu nào để lưu.'], 400);
         }
         $allowed = self::allowed_blogs();
+        $type = self::ledger_type();
         $by_blog = [];
         foreach (array_slice($items, 0, 500) as $it) {
             $blog_id = (int) ($it['blog'] ?? 0);
@@ -192,10 +209,11 @@ class TGS_HTsoft_Api_Recon
                 $L = $wpdb->prefix . 'local_ledger';
                 foreach ($list as $id => $it) {
                     $adv = $wpdb->get_var($wpdb->prepare(
-                        "SELECT local_ledger_advance_meta FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=10",
-                        $id
+                        "SELECT local_ledger_advance_meta FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=%d",
+                        $id,
+                        $type
                     ));
-                    if ($adv === null && !$wpdb->get_var($wpdb->prepare("SELECT 1 FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=10", $id))) {
+                    if ($adv === null && !$wpdb->get_var($wpdb->prepare("SELECT 1 FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=%d", $id, $type))) {
                         continue;
                     }
                     $m = json_decode((string) $adv, true);
@@ -220,5 +238,76 @@ class TGS_HTsoft_Api_Recon
             }
         }
         wp_send_json_success(['saved' => $saved]);
+    }
+
+    /**
+     * Nhập tay số phiếu HTsoft cho MỘT phiếu (nút "Mã HTsoft" trong cửa sổ chi tiết phiếu của bc-tk) — dùng
+     * khi đối soát Excel bỏ sót hoặc ghép nhầm. Cần mật khẩu. code rỗng = gỡ liên kết. Chỉ ghi
+     * advance_meta.htsoft_ref; không đổi mã phiếu, không sửa ghi chú, không gửi gì sang HTsoft.
+     */
+    public static function ajax_set()
+    {
+        self::guard();
+        global $wpdb;
+        $expected = class_exists('TGS_Book_Close') ? TGS_Book_Close::PASSWORD : 'Thuy!@#';
+        if (!hash_equals($expected, (string) wp_unslash($_POST['password'] ?? ''))) {
+            wp_send_json_error(['message' => 'Sai mật khẩu.'], 403);
+        }
+        $blog_id = (int) ($_POST['blog'] ?? 0);
+        $id = (int) ($_POST['id'] ?? 0);
+        if ($blog_id <= 0 || $id <= 0 || !in_array($blog_id, self::allowed_blogs(), true) || !get_blog_details($blog_id)) {
+            wp_send_json_error(['message' => 'Shop không hợp lệ.'], 400);
+        }
+        $type = self::ledger_type();
+        // Nhiều số phiếu (ca trùng) ngăn bằng dấu phẩy / khoảng trắng; chuẩn hoá về "A, B".
+        $codes = [];
+        foreach (preg_split('/[\s,;]+/', strtoupper((string) wp_unslash($_POST['code'] ?? ''))) as $c) {
+            $c = preg_replace('/[^A-Z0-9._\-]/', '', $c);
+            if ($c !== '') {
+                $codes[$c] = 1;
+            }
+        }
+        $codes = array_slice(array_keys($codes), 0, 10);
+
+        switch_to_blog($blog_id);
+        try {
+            $L = $wpdb->prefix . 'local_ledger';
+            $row = $wpdb->get_row($wpdb->prepare(
+                "SELECT local_ledger_code code, local_ledger_advance_meta adv FROM {$L} WHERE local_ledger_id=%d AND local_ledger_type=%d",
+                $id,
+                $type
+            ), ARRAY_A);
+            if (!$row) {
+                wp_send_json_error(['message' => 'Không tìm thấy phiếu.'], 404);
+            }
+            $m = json_decode((string) $row['adv'], true);
+            $m = is_array($m) ? $m : [];
+            $old = (string) ($m[self::META_KEY]['code'] ?? '');
+            if (!$codes) {
+                unset($m[self::META_KEY]);
+            } else {
+                $user = wp_get_current_user();
+                $keep = (isset($m[self::META_KEY]) && is_array($m[self::META_KEY])) ? $m[self::META_KEY] : [];
+                $m[self::META_KEY] = [
+                    'code'   => implode(', ', $codes),
+                    'n'      => count($codes),
+                    // Tổng nợ / ngày nhập chỉ có khi ghép từ Excel; sửa tay sang mã khác thì không còn đúng nữa.
+                    'total'  => $old === implode(', ', $codes) ? (float) ($keep['total'] ?? 0) : 0,
+                    'date'   => $old === implode(', ', $codes) ? (string) ($keep['date'] ?? '') : '',
+                    'at'     => current_time('mysql'),
+                    'manual' => 1,
+                    'by'     => ($user && $user->ID) ? (string) ($user->display_name ?: $user->user_login) : '',
+                ];
+            }
+            $wpdb->update($L, ['local_ledger_advance_meta' => wp_json_encode($m, JSON_UNESCAPED_UNICODE)], ['local_ledger_id' => $id]);
+        } finally {
+            restore_current_blog();
+        }
+        $new = implode(', ', $codes);
+        wp_send_json_success([
+            'code'    => $new,
+            'message' => $new === '' ? 'Đã gỡ liên kết số phiếu HTsoft của phiếu ' . $row['code'] . '.'
+                : 'Phiếu ' . $row['code'] . ' ↔ HTsoft ' . $new . ($old !== '' && $old !== $new ? ' (trước: ' . $old . ')' : '') . '.',
+        ]);
     }
 }

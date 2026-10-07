@@ -14,6 +14,10 @@
         var $head = $('.bctk-result__head');
         if (!$head.length || $('#htaRcBtn').length) { return; }
 
+        // Màn phiếu điều chỉnh giảm: đối soát PHIẾU HOÀN ↔ phiếu hàng bán trả lại HTsoft (tiền so theo giá trị tuyệt đối).
+        var RET = CFG.kind === 'return';
+        var W = RET ? { bt: 'phiếu hoàn', ht: 'phiếu trả lại', day: 'Ngày hoàn' } : { bt: 'phiếu bán', ht: 'hoá đơn', day: 'Ngày bán' };
+        var amtOf = function (v) { return RET ? Math.abs(Number(v || 0)) : Number(v || 0); };
         var LABEL = '🧾 Đối soát HTsoft (Excel)';
         var $btn = $('<button type="button" id="htaRcBtn" '
             + 'style="margin-left:10px;padding:6px 14px;border:1px solid #0f766e;border-radius:6px;'
@@ -27,7 +31,7 @@
 
         // Thứ tự = mức cần xem trước.
         var ST = {
-            dup:    { lab: 'TRÙNG — 1 phiếu ra nhiều hoá đơn', cls: 'rc-dup' },
+            dup:    { lab: 'TRÙNG — 1 phiếu ra nhiều ' + W.ht, cls: 'rc-dup' },
             amt:    { lab: 'Lệch tiền', cls: 'rc-amt' },
             date:   { lab: 'Lệch ngày nhập', cls: 'rc-date' },
             miss:   { lab: 'Chưa có bên HTsoft', cls: 'rc-miss' },
@@ -40,6 +44,7 @@
             var fd = new FormData();
             fd.append('action', action);
             fd.append('nonce', CFG.nonce);
+            fd.append('kind', RET ? 'return' : 'sale');
             Object.keys(data || {}).forEach(function (k) { fd.append(k, data[k]); });
             return fetch(CFG.ajaxUrl, { method: 'POST', body: fd, credentials: 'same-origin' })
                 .then(function (res) {
@@ -179,7 +184,7 @@
                 // Mã BT trùng nhau giữa các shop: ưu tiên shop có mã là phần đầu của số phiếu HTsoft, rồi tới khớp tiền.
                 var a = cands.filter(function (L) { return L.shop && h.code.indexOf(String(L.shop).toUpperCase()) === 0; });
                 if (a.length === 1) { return a[0]; }
-                var b = (a.length ? a : cands).filter(function (L) { return Math.abs(L.amt - h.total) < 1; });
+                var b = (a.length ? a : cands).filter(function (L) { return Math.abs(amtOf(L.amt) - amtOf(h.total)) < 1; });
                 if (b.length >= 1) { return b[0]; }
                 h.amb = 1;
                 return (a.length ? a : cands)[0];
@@ -199,7 +204,7 @@
                 var sum = L.hs.reduce(function (s, h) { return s + h.total; }, 0);
                 var flags = [];
                 if (L.hs.length > 1) { flags.push('dup'); }
-                if (Math.abs(L.hs[0].total - L.amt) >= 1) { flags.push('amt'); }
+                if (Math.abs(amtOf(L.hs[0].total) - amtOf(L.amt)) >= 1) { flags.push('amt'); }
                 if (L.hs.some(function (h) { return h.date && h.date !== String(L.at).slice(0, 10); })) { flags.push('date'); }
                 out.push({ st: flags[0] || 'ok', flags: flags, L: L, hs: L.hs, sum: sum });
             });
@@ -243,12 +248,12 @@
                 + '<div style="position:absolute;inset:0;background:rgba(15,23,42,.45);"></div>'
                 + '<div style="position:relative;margin:2vh auto;width:min(1680px,97vw);height:96vh;display:flex;flex-direction:column;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.25);">'
                 + '<div style="padding:14px 20px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;">'
-                + '<strong style="font-size:16px;">Đối soát phiếu bán BTsoft ↔ hoá đơn bán lẻ HTsoft</strong>'
+                + '<strong style="font-size:16px;">' + (RET ? 'Đối soát phiếu hoàn BTsoft ↔ phiếu hàng bán trả lại HTsoft' : 'Đối soát phiếu bán BTsoft ↔ hoá đơn bán lẻ HTsoft') + '</strong>'
                 + '<span style="color:#64748b;font-size:12.5px;">BTsoft là gốc · file Excel xuất từ HTsoft</span>'
                 + '<button type="button" id="htaRcX" style="margin-left:auto;border:0;background:none;font-size:22px;cursor:pointer;">×</button></div>'
                 + '<div style="flex-shrink:0;padding:12px 20px;border-bottom:1px solid #e2e8f0;display:flex;flex-wrap:wrap;gap:12px;align-items:center;font-size:13px;color:#334155;">'
                 + '<label>File Excel HTsoft <input type="file" id="htaRcFile" accept=".xlsx,.xls,.csv" style="margin-left:6px;"></label>'
-                + '<label>Phiếu BTsoft từ <input type="date" id="htaRcFrom"></label><label>đến <input type="date" id="htaRcTo"></label>'
+                + '<label>' + (RET ? 'Phiếu hoàn' : 'Phiếu bán') + ' BTsoft từ <input type="date" id="htaRcFrom"></label><label>đến <input type="date" id="htaRcTo"></label>'
                 + '<button type="button" class="btn btn-main" id="htaRcRun" disabled>Đối soát</button>'
                 + '<span id="htaRcInfo" class="sub" style="flex:1;min-width:260px;">File cần các cột: <b>Số phiếu</b> · <b>Tổng nợ</b> · <b>Diễn giải</b> · <b>Ngày nhập</b>.</span>'
                 + '</div>'
@@ -256,7 +261,7 @@
                 + '<div style="flex-shrink:0;padding:0 20px 8px;display:none;" id="htaRcSearchWrap"><input type="text" id="htaRcQ" placeholder="Tìm mã phiếu BTsoft / số phiếu HTsoft / diễn giải…" style="width:420px;max-width:100%;"></div>'
                 + '<div id="htaRcMain" style="flex:1;min-height:0;overflow:auto;padding:0 20px;"><table><thead><tr>'
                 + '<th>Kết quả</th>'
-                + '<th class="grp-bt">Shop</th><th>Mã phiếu BTsoft</th><th>Ngày bán</th><th class="num">Thành tiền BTsoft</th><th>Mã SO</th>'
+                + '<th class="grp-bt">Shop</th><th>Mã phiếu BTsoft</th><th>' + W.day + '</th><th class="num">Thành tiền BTsoft</th><th>Mã SO</th>'
                 + '<th class="grp-ht">Số phiếu HTsoft</th><th>Ngày nhập HTsoft</th><th class="num">Tổng nợ HTsoft</th><th class="num">Lệch tiền</th><th>Diễn giải HTsoft</th>'
                 + '</tr></thead><tbody id="htaRcRows"><tr><td colspan="11" style="padding:26px;color:#64748b;">Chọn file Excel xuất từ HTsoft rồi bấm <b>Đối soát</b>.</td></tr></tbody></table></div>'
                 + '<div style="flex-shrink:0;padding:12px 20px;border-top:1px solid #e2e8f0;display:flex;gap:8px;align-items:center;">'
@@ -290,9 +295,9 @@
                     st.fileName = f.name;
                     var i = p.info, col = function (c) { return c === -1 ? '<span class="bad">không thấy</span>' : '"' + esc(i.heads[c]) + '"'; };
                     var noBt = p.list.filter(function (h) { return !h.bt; }).length;
-                    $('#htaRcInfo').html('Đọc được <b>' + p.list.length + '</b> hoá đơn HTsoft (sheet "' + esc(i.sheet) + '"). Cột: số phiếu ' + col(i.cCode)
+                    $('#htaRcInfo').html('Đọc được <b>' + p.list.length + '</b> ' + W.ht + ' HTsoft (sheet "' + esc(i.sheet) + '"). Cột: số phiếu ' + col(i.cCode)
                         + ' · tổng nợ ' + col(i.cTotal) + ' · diễn giải ' + col(i.cNote) + ' · ngày nhập ' + col(i.cDate)
-                        + '. ' + noBt + ' hoá đơn không có mã BT trong diễn giải (ghép theo số phiếu).');
+                        + '. ' + noBt + ' ' + W.ht + ' không có mã BT trong diễn giải (ghép theo số phiếu).');
                     $('#htaRcRun').prop('disabled', !p.list.length);
                 } catch (err) {
                     $('#htaRcInfo').html('<span class="bad">' + esc(err.message || 'Không đọc được file.') + '</span>');
@@ -343,7 +348,7 @@
                 chip('problem', 'Cần xem', prob) + ORDER.map(function (k) { return chip(k, ST[k].lab, cnt[k] || 0, ST[k].cls); }).join('')
                 + chip('all', 'Tất cả', st.rows.length)
                 + '<div class="sub" style="margin:2px 0 6px;">Shop: ' + esc((st.shops || []).map(function (s) { return s.shop + ' (' + s.n + ' phiếu)'; }).join(', '))
-                + ' · file: ' + esc(st.fileName) + ' (' + st.ht.length + ' hoá đơn)</div>'
+                + ' · file: ' + esc(st.fileName) + ' (' + st.ht.length + ' ' + W.ht + ')</div>'
             );
             var rows = visible();
             $('#htaRcRows').html(rows.map(function (r) {
@@ -352,16 +357,16 @@
                 var sub = '';
                 if (r.st === 'miss') {
                     sub = /^BT/i.test(L.code)
-                        ? (L.so ? 'Đã lên SO, chưa thấy hoá đơn' : 'Chưa đẩy lên SO')
+                        ? (L.so ? 'Đã lên SO, chưa thấy ' + W.ht : 'Chưa đẩy lên SO')
                         : 'Mã thật nhưng không có trong file';
                 }
                 if (hs.some(function (h) { return h.amb; })) { sub = 'Mã BT trùng ở nhiều shop — tự chọn shop gần đúng nhất'; }
                 var d0 = L ? String(L.at).slice(0, 10) : '';
-                var diff = L && hs.length ? hs[0].total - L.amt : null;
+                var diff = L && hs.length ? amtOf(hs[0].total) - amtOf(L.amt) : null;
                 return '<tr class="' + (r.st === 'dup' ? 'r-dup' : '') + '">'
                     + '<td>' + tags + (sub ? '<div class="sub">' + esc(sub) + '</div>' : '') + '</td>'
                     + '<td class="grp-bt mono">' + esc(L ? L.shop : '') + '</td>'
-                    + '<td class="mono">' + esc(L ? L.code : '') + (L && L.is_z ? '<div class="sub">phiếu Z của ' + esc(L.parent) + '</div>' : '') + '</td>'
+                    + '<td class="mono">' + esc(L ? L.code : '') + (L && L.is_z ? '<div class="sub">phiếu Z của ' + esc(L.parent) + '</div>' : '') + (L && RET && L.parent ? '<div class="sub">trả cho ' + esc(L.parent) + '</div>' : '') + '</td>'
                     + '<td class="mono">' + esc(L ? dmy(d0) + ' ' + String(L.at).slice(11, 16) : '') + '</td>'
                     + '<td class="num">' + (L ? money(L.amt) : '') + '</td>'
                     + '<td class="mono">' + esc(L ? L.so : '') + '</td>'
@@ -404,14 +409,14 @@
         }
 
         function exportXls() {
-            var aoa = [['Kết quả', 'Shop', 'Mã phiếu BTsoft', 'Ngày bán', 'Thành tiền BTsoft', 'Mã SO', 'Số phiếu HTsoft', 'Ngày nhập HTsoft', 'Tổng nợ HTsoft', 'Lệch tiền', 'Diễn giải HTsoft']];
+            var aoa = [['Kết quả', 'Shop', 'Mã phiếu BTsoft', W.day, 'Thành tiền BTsoft', 'Mã SO', 'Số phiếu HTsoft', 'Ngày nhập HTsoft', 'Tổng nợ HTsoft', 'Lệch tiền', 'Diễn giải HTsoft']];
             visible().forEach(function (r) {
                 var L = r.L, hs = r.hs.length ? r.hs : [null];
                 hs.forEach(function (h) {
                     aoa.push([
                         ((r.flags && r.flags.length) ? r.flags : [r.st]).map(function (f) { return ST[f].lab; }).join('; '),
                         L ? L.shop : '', L ? L.code : '', L ? dmy(String(L.at).slice(0, 10)) + ' ' + String(L.at).slice(11, 16) : '', L ? Math.round(L.amt) : '',
-                        L ? L.so : '', h ? h.code : '', h ? dmy(h.date) : '', h ? h.total : '', (L && h) ? Math.round(h.total - L.amt) : '', h ? h.note : ''
+                        L ? L.so : '', h ? h.code : '', h ? dmy(h.date) : '', h ? h.total : '', (L && h) ? Math.round(amtOf(h.total) - amtOf(L.amt)) : '', h ? h.note : ''
                     ]);
                 });
             });
@@ -419,7 +424,7 @@
             ws['!cols'] = [28, 9, 17, 17, 16, 15, 19, 14, 16, 12, 60].map(function (w) { return { wch: w }; });
             var wb = XLSX.utils.book_new();
             XLSX.utils.book_append_sheet(wb, ws, 'Doi soat');
-            XLSX.writeFile(wb, 'doi-soat-htsoft-' + ($('#htaRcFrom').val() || '') + '_' + ($('#htaRcTo').val() || '') + '.xlsx');
+            XLSX.writeFile(wb, 'doi-soat-htsoft-' + (RET ? 'tra-lai-' : '') + ($('#htaRcFrom').val() || '') + '_' + ($('#htaRcTo').val() || '') + '.xlsx');
         }
 
         if (CFG.test) { CFG.test({ parseSheet: parseSheet, match: match, btOf: btOf, toYmd: toYmd, toMoney: toMoney }); }   // chỉ dùng khi chạy thử ngoài trình duyệt
