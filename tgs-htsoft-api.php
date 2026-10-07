@@ -41,8 +41,10 @@ require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-catalog.php';
 require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-mapper.php';   // CHỖ ĐIỀN khi HTsoft gửi tài liệu API hoá đơn
 require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-invoice.php';  // dịch vụ ghi phiếu qua API + xem trước
 require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-admin.php';
+require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-recon.php';    // đối soát phiếu bán ↔ hoá đơn HTsoft bằng Excel (nút ở tgs-bc-tk)
 require_once TGS_HTSOFT_API_DIR . 'includes/class-tgs-htsoft-api-so.php';       // đẩy phiếu BT lên SO qua AddListOrder (nút ở tgs-bc-tk)
 
 add_action('plugins_loaded', ['TGS_HTsoft_Api_Admin', 'init']);
 add_action('plugins_loaded', ['TGS_HTsoft_Api_SO', 'init']);
+add_action('plugins_loaded', ['TGS_HTsoft_Api_Recon', 'init']);
 add_action('plugins_loaded', ['TGS_HTsoft_Api_Invoice', 'init']);
