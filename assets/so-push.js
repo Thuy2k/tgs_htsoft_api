@@ -1,6 +1,6 @@
 /**
  * Nút "Đẩy lên SO (API)" ở màn Quản lý phiếu xuất bán (VAT) của tgs-bc-tk.
- * Liệt kê phiếu bán còn mã BT → bỏ tích phiếu không đẩy → xem dữ liệu sẽ gửi → đẩy theo lô
+ * Liệt kê phiếu bán chưa lên HTsoft → bỏ tích phiếu không đẩy → xem dữ liệu sẽ gửi → đẩy theo lô
  * qua API AddListOrder (không dùng SQL). Phiếu đã lên SO được đánh dấu; có nhật ký.
  */
 (function ($) {
@@ -72,7 +72,7 @@
                 + '<div style="position:absolute;inset:0;background:rgba(15,23,42,.45);"></div>'
                 + '<div style="position:relative;margin:3vh auto;width:min(1200px,95vw);max-height:94vh;display:flex;flex-direction:column;background:#fff;border-radius:12px;box-shadow:0 20px 50px rgba(0,0,0,.25);">'
                 + '<div style="padding:14px 18px;border-bottom:1px solid #e2e8f0;display:flex;align-items:center;gap:10px;">'
-                + '<strong style="font-size:15px;">Đẩy ' + WHAT + ' còn mã BT lên HTsoft thành đơn đặt hàng (SO) — qua API</strong>'
+                + '<strong style="font-size:15px;">Đẩy ' + WHAT + ' chưa lên HTsoft lên HTsoft thành đơn đặt hàng (SO) — qua API</strong>'
                 + '<span id="htaSoSum" style="color:#64748b;font-size:12.5px;"></span>'
                 + '<button type="button" id="htaSoX" style="margin-left:auto;border:0;background:none;font-size:20px;cursor:pointer;">×</button></div>'
                 + '<div id="htaSoShops" style="flex-shrink:0;padding:10px 18px;border-bottom:1px solid #e2e8f0;font-size:12.5px;color:#334155;max-height:16vh;overflow:auto;"></div>'
@@ -180,7 +180,7 @@
                 return it;
             });
             var nDone = st.items.filter(function (x) { return x.done; }).length;
-            $('#htaSoSum').text(st.items.length + ' phiếu còn mã BT · ' + nDone + ' đã lên SO · quét ' + data.days + ' ngày gần nhất, sau mốc khoá sổ');
+            $('#htaSoSum').text(st.items.length + ' phiếu chưa lên HTsoft · ' + nDone + ' đã lên SO · quét ' + data.days + ' ngày gần nhất, sau mốc khoá sổ');
             // Shop đang chọn nhưng chưa bật đẩy SO thì KHÔNG được liệt kê phiếu — báo rõ, kèm nút bật một lượt.
             st.off = (data.shops || []).filter(function (sh) { return !sh.so_on; });
             $('#htaSoShops').html(
@@ -313,7 +313,7 @@
             var pass = window.prompt(
                 'ĐẨY ' + WHAT.toUpperCase() + ' CÒN MÃ BT LÊN HTSOFT THÀNH ĐƠN ĐẶT HÀNG (SO) — QUA API\n\n'
                 + 'Quét ' + (blogs.length ? blogs.length + ' chi nhánh đang tích' : 'TẤT CẢ chi nhánh áp dụng thuế')
-                + ': ' + WHAT + ' còn mã BT, tạo sau mốc khoá sổ.\n'
+                + ': ' + WHAT + ' chưa lên HTsoft, tạo sau mốc khoá sổ.\n'
                 + 'Bước này mới chỉ LIỆT KÊ để bạn xem và bỏ tích — chưa gửi gì.\n\nNhập mật khẩu:'
             );
             if (pass === null) { return; }
